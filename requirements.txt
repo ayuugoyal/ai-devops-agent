@@ -1,0 +1,14 @@
+# Core dependencies
+paramiko>=3.3.1
+python-dotenv>=1.0.0
+
+# Optional but recommended
+asyncio>=3.4.3
+typing-extensions>=4.8.0
+
+# Development dependencies (optional)
+pytest>=7.4.3
+pytest-asyncio>=0.21.1
+black>=23.11.0
+flake8>=6.1.0
+mypy>=1.7.0

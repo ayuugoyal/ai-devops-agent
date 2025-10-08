@@ -1,0 +1,19 @@
+version: '3.8'
+
+services:
+  mcp-remote-server:
+    image: ayuugoyal/mcp-remote-server:latest
+    container_name: mcp-remote-server
+    stdin_open: true
+    tty: true
+    env_file:
+      - .env  
+    volumes:
+      - ~/.ssh:/home/mcpuser/.ssh:ro
+    restart: unless-stopped
+    networks:
+      - mcp-network
+
+networks:
+  mcp-network:
+    driver: bridge
