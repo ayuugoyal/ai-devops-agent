@@ -3,14 +3,14 @@ name: Docker Build and Push
 
 on:
   push:
-    branches: [ main ]     
+    branches: [ main ]
     tags: [ 'v*.*.*' ]
   pull_request:
     branches: [ main ]
 
 env:
-  REGISTRY: docker.io 
-  IMAGE_NAME: ayuugoyal/mcp-remote-server  
+  REGISTRY: docker.io
+  IMAGE_NAME: ayuugoyal/mcp-remote-server
 
 jobs:
   test:
@@ -37,14 +37,13 @@ jobs:
           pytest tests/ -v --cov=src --cov-report=term
       
       - name: Upload test results
-        if: always() 
-        uses: actions/upload-artifact@v3
+        if: always()
+        uses: actions/upload-artifact@v4
         with:
           name: test-results
           path: |
             .coverage
             coverage.xml
-
 
   build:
     name: Build and Push Docker Image
@@ -54,7 +53,7 @@ jobs:
     if: github.event_name != 'pull_request'
     
     permissions:
-      contents: read 
+      contents: read
       packages: write
     
     steps:
@@ -76,11 +75,11 @@ jobs:
         with:
           images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
           tags: |
-            type=ref,event=branch                    # Branch name (main)
-            type=semver,pattern={{version}}          # Version (1.0.0)
-            type=semver,pattern={{major}}.{{minor}}  # Version (1.0)
-            type=semver,pattern={{major}}            # Version (1)
-            type=raw,value=latest,enable={{is_default_branch}}  # Latest tag
+            type=ref,event=branch
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=semver,pattern={{major}}
+            type=raw,value=latest,enable={{is_default_branch}}
       
       - name: Build and push Docker image
         uses: docker/build-push-action@v5
