@@ -1,327 +1,310 @@
 """
-MCP Server for Remote Server Management
-Main entry point for the MCP protocol server
+AI DevOps Agent — MCP Server
+Powered by the official MCP Python SDK (mcp[cli])
+
+Integrates with official MCP servers:
+  - AWS MCP (cost analysis, infrastructure)
+  - Grafana MCP (dashboards, alerts, metrics)
+  - GitHub MCP (PRs, issues, Actions)
+  - Kubernetes MCP (cluster management)
+
+Plus built-in SSH-based tools for direct server control.
 """
 
-import asyncio
-import json
-import sys
-from typing import Optional, Dict, Any
-
+from mcp.server.fastmcp import FastMCP
 from .config.settings import load_servers_from_env
 from .tools import (
-    list_servers,
-    connect_server,
-    disconnect_server,
+    list_servers, connect_server, disconnect_server,
+    system_info, run_command,
+    list_files, read_file, write_file,
     pm2_manage,
-    list_files,
-    read_file,
-    system_info,
-    run_command
+    docker_manage, compose_manage,
+    git_manage, deploy, rollback, env_manage,
+    service_manage, port_check, process_manage,
+    log_manage,
+    health_check, network_manage, cron_manage,
 )
-from .tools.server_tools import connections
+
+load_servers_from_env()
+mcp = FastMCP("ai-devops-agent")
 
 
-async def handle_request(request: dict) -> Optional[dict]:
-    """
-    Handle incoming MCP protocol requests
-    
-    Processes three main request types:
-    - initialize: Protocol handshake
-    - tools/list: List available tools
-    - tools/call: Execute a tool
-    
-    Args:
-        request: JSON-RPC 2.0 request object
-        
-    Returns:
-        JSON-RPC 2.0 response object or None for notifications
-    """
-    method = request.get("method")
-    request_id = request.get("id")
-    
-    try:
-        if method == "initialize":
-            return {
-                "jsonrpc": "2.0",
-                "id": request_id,
-                "result": {
-                    "protocolVersion": "2024-11-05",
-                    "capabilities": {
-                        "tools": {}
-                    },
-                    "serverInfo": {
-                        "name": "remote-server-mcp",
-                        "version": "1.0.0"
-                    }
-                }
-            }
-        
-        elif method == "tools/list":
-            return {
-                "jsonrpc": "2.0",
-                "id": request_id,
-                "result": {
-                    "tools": [
-                        {
-                            "name": "list_servers",
-                            "description": "List all configured servers from environment",
-                            "inputSchema": {
-                                "type": "object",
-                                "properties": {},
-                                "required": []
-                            }
-                        },
-                        {
-                            "name": "connect_server",
-                            "description": "Connect to a configured remote server",
-                            "inputSchema": {
-                                "type": "object",
-                                "properties": {
-                                    "server_id": {
-                                        "type": "string",
-                                        "description": "Server ID from configuration"
-                                    }
-                                },
-                                "required": ["server_id"]
-                            }
-                        },
-                        {
-                            "name": "pm2_manage",
-                            "description": "Manage PM2 processes (list, start, stop, restart, delete, logs, status)",
-                            "inputSchema": {
-                                "type": "object",
-                                "properties": {
-                                    "server_id": {
-                                        "type": "string",
-                                        "description": "Server ID"
-                                    },
-                                    "action": {
-                                        "type": "string",
-                                        "enum": ["list", "start", "stop", "restart", "delete", "logs", "status"],
-                                        "description": "Action to perform"
-                                    },
-                                    "app_name": {
-                                        "type": "string",
-                                        "description": "App name (required for most actions)"
-                                    }
-                                },
-                                "required": ["server_id", "action"]
-                            }
-                        },
-                        {
-                            "name": "list_files",
-                            "description": "List files and directories in a path",
-                            "inputSchema": {
-                                "type": "object",
-                                "properties": {
-                                    "server_id": {
-                                        "type": "string",
-                                        "description": "Server ID"
-                                    },
-                                    "path": {
-                                        "type": "string",
-                                        "description": "Directory path (default: current directory)"
-                                    }
-                                },
-                                "required": ["server_id"]
-                            }
-                        },
-                        {
-                            "name": "read_file",
-                            "description": "Read the contents of a file",
-                            "inputSchema": {
-                                "type": "object",
-                                "properties": {
-                                    "server_id": {
-                                        "type": "string",
-                                        "description": "Server ID"
-                                    },
-                                    "file_path": {
-                                        "type": "string",
-                                        "description": "Full path to the file"
-                                    }
-                                },
-                                "required": ["server_id", "file_path"]
-                            }
-                        },
-                        {
-                            "name": "system_info",
-                            "description": "Get system information (CPU, memory, disk usage)",
-                            "inputSchema": {
-                                "type": "object",
-                                "properties": {
-                                    "server_id": {
-                                        "type": "string",
-                                        "description": "Server ID"
-                                    }
-                                },
-                                "required": ["server_id"]
-                            }
-                        },
-                        {
-                            "name": "run_command",
-                            "description": "Run any custom shell command on the remote server",
-                            "inputSchema": {
-                                "type": "object",
-                                "properties": {
-                                    "server_id": {
-                                        "type": "string",
-                                        "description": "Server ID"
-                                    },
-                                    "command": {
-                                        "type": "string",
-                                        "description": "Shell command to execute"
-                                    }
-                                },
-                                "required": ["server_id", "command"]
-                            }
-                        },
-                        {
-                            "name": "disconnect_server",
-                            "description": "Disconnect from a remote server",
-                            "inputSchema": {
-                                "type": "object",
-                                "properties": {
-                                    "server_id": {
-                                        "type": "string",
-                                        "description": "Server ID"
-                                    }
-                                },
-                                "required": ["server_id"]
-                            }
-                        }
-                    ]
-                }
-            }
-        
-        elif method == "tools/call":
-            params = request.get("params", {})
-            tool_name = params.get("name")
-            arguments = params.get("arguments", {})
-            
-            # Map tool names to functions
-            tools = {
-                "list_servers": list_servers,
-                "connect_server": connect_server,
-                "pm2_manage": pm2_manage,
-                "list_files": list_files,
-                "read_file": read_file,
-                "system_info": system_info,
-                "run_command": run_command,
-                "disconnect_server": disconnect_server
-            }
-            
-            if tool_name in tools:
-                try:
-                    result = await tools[tool_name](arguments)
-                    return {
-                        "jsonrpc": "2.0",
-                        "id": request_id,
-                        "result": {
-                            "content": result
-                        }
-                    }
-                except Exception as e:
-                    return {
-                        "jsonrpc": "2.0",
-                        "id": request_id,
-                        "result": {
-                            "content": [{"type": "text", "text": f"Error: {str(e)}"}],
-                            "isError": True
-                        }
-                    }
-            else:
-                return {
-                    "jsonrpc": "2.0",
-                    "id": request_id,
-                    "error": {
-                        "code": -32601,
-                        "message": f"Unknown tool: {tool_name}"
-                    }
-                }
-        
-        elif method == "notifications/initialized":
-            # Notifications don't require responses
-            return None
-        
-        else:
-            return {
-                "jsonrpc": "2.0",
-                "id": request_id,
-                "error": {
-                    "code": -32601,
-                    "message": f"Method not found: {method}"
-                }
-            }
-    
-    except Exception as e:
-        print(f"Error handling request: {str(e)}", file=sys.stderr)
-        return {
-            "jsonrpc": "2.0",
-            "id": request_id,
-            "error": {
-                "code": -32603,
-                "message": f"Internal error: {str(e)}"
-            }
-        }
+# ── Server Management ─────────────────────────────────────────────────────────
+
+@mcp.tool()
+async def list_servers_tool() -> str:
+    """List all configured servers and their connection status."""
+    result = await list_servers({})
+    return result[0]["text"]
 
 
-async def main():
+@mcp.tool()
+async def connect_server_tool(server_id: str) -> str:
+    """Connect to a configured remote server via SSH."""
+    result = await connect_server({"server_id": server_id})
+    return result[0]["text"]
+
+
+@mcp.tool()
+async def disconnect_server_tool(server_id: str) -> str:
+    """Disconnect from a remote server."""
+    result = await disconnect_server({"server_id": server_id})
+    return result[0]["text"]
+
+
+# ── System ────────────────────────────────────────────────────────────────────
+
+@mcp.tool()
+async def system_info_tool(server_id: str) -> str:
+    """Get CPU, memory, disk, and uptime info from a remote server."""
+    result = await system_info({"server_id": server_id})
+    return result[0]["text"]
+
+
+@mcp.tool()
+async def run_command_tool(server_id: str, command: str) -> str:
+    """Run any shell command on a remote server."""
+    result = await run_command({"server_id": server_id, "command": command})
+    return result[0]["text"]
+
+
+@mcp.tool()
+async def health_check_tool(server_id: str) -> str:
+    """Full health check: uptime, memory, disk, ports, Docker, failed services."""
+    result = await health_check({"server_id": server_id})
+    return result[0]["text"]
+
+
+# ── Files ─────────────────────────────────────────────────────────────────────
+
+@mcp.tool()
+async def list_files_tool(server_id: str, path: str = ".") -> str:
+    """List files and directories at a path on the remote server."""
+    result = await list_files({"server_id": server_id, "path": path})
+    return result[0]["text"]
+
+
+@mcp.tool()
+async def read_file_tool(server_id: str, file_path: str) -> str:
+    """Read the contents of a file on the remote server."""
+    result = await read_file({"server_id": server_id, "file_path": file_path})
+    return result[0]["text"]
+
+
+@mcp.tool()
+async def write_file_tool(server_id: str, file_path: str, content: str) -> str:
+    """Write content to a file on the remote server (creates or overwrites)."""
+    result = await write_file({"server_id": server_id, "file_path": file_path, "content": content})
+    return result[0]["text"]
+
+
+# ── PM2 ───────────────────────────────────────────────────────────────────────
+
+@mcp.tool()
+async def pm2_manage_tool(server_id: str, action: str, app_name: str = "") -> str:
     """
-    Main MCP server loop
-    
-    Implements stdio-based JSON-RPC 2.0 communication:
-    1. Reads JSON requests from stdin (one per line)
-    2. Processes requests through handle_request()
-    3. Writes JSON responses to stdout
+    Manage PM2 processes on the remote server.
+    Actions: list, start, stop, restart, delete, logs, status
     """
-    load_servers_from_env()
-    
-    print("Remote Server MCP ready", file=sys.stderr)
-    
-    while True:
-        try:
-            # Read request from stdin
-            line = await asyncio.get_event_loop().run_in_executor(
-                None, sys.stdin.readline
-            )
-            
-            if not line:
-                break
-            
-            line = line.strip()
-            if not line:
-                continue
-            
-            # Parse and handle request
-            request = json.loads(line)
-            print(f"Received request: {request.get('method')}", file=sys.stderr)
-            
-            response = await handle_request(request)
-            
-            # Send response (if not a notification)
-            if response:
-                print(json.dumps(response), flush=True)
-            
-        except json.JSONDecodeError as e:
-            print(f"JSON decode error: {str(e)}", file=sys.stderr)
-            continue
-        except Exception as e:
-            print(f"Error: {str(e)}", file=sys.stderr)
-            import traceback
-            traceback.print_exc(file=sys.stderr)
+    result = await pm2_manage({"server_id": server_id, "action": action, "app_name": app_name})
+    return result[0]["text"]
+
+
+# ── Docker ────────────────────────────────────────────────────────────────────
+
+@mcp.tool()
+async def docker_manage_tool(
+    server_id: str, action: str,
+    name: str = "", image: str = "", command: str = "", lines: int = 50,
+) -> str:
+    """
+    Manage Docker containers and images on the remote server.
+    Actions: containers, running, start, stop, restart, remove, logs,
+             inspect, exec, images, pull, rmi, stats, prune
+    """
+    result = await docker_manage({
+        "server_id": server_id, "action": action,
+        "name": name, "image": image, "command": command, "lines": lines,
+    })
+    return result[0]["text"]
+
+
+@mcp.tool()
+async def compose_manage_tool(
+    server_id: str, action: str,
+    path: str = ".", service: str = "", lines: int = 50,
+) -> str:
+    """
+    Manage Docker Compose stacks on the remote server.
+    Actions: up, down, restart, ps, logs, pull, build
+    """
+    result = await compose_manage({
+        "server_id": server_id, "action": action,
+        "path": path, "service": service, "lines": lines,
+    })
+    return result[0]["text"]
+
+
+# ── Git & Deployments ─────────────────────────────────────────────────────────
+
+@mcp.tool()
+async def git_manage_tool(
+    server_id: str, action: str,
+    path: str = ".", branch: str = "", lines: int = 10,
+) -> str:
+    """
+    Git operations on the remote server.
+    Actions: status, pull, log, branch, checkout, diff, stash
+    """
+    result = await git_manage({
+        "server_id": server_id, "action": action,
+        "path": path, "branch": branch, "lines": lines,
+    })
+    return result[0]["text"]
+
+
+@mcp.tool()
+async def deploy_tool(
+    server_id: str, path: str, branch: str = "main",
+    script: str = "", service: str = "", pm2_app: str = "", compose_path: str = "",
+) -> str:
+    """
+    Deploy code on the remote server.
+    Auto-detects Node.js / Python. Runs: git pull → install → build → restart.
+    Pass script= to use a custom deploy script.
+    Restarts via: systemd service, PM2 app, or Docker Compose path.
+    """
+    result = await deploy({
+        "server_id": server_id, "path": path, "branch": branch,
+        "script": script, "service": service,
+        "pm2_app": pm2_app, "compose_path": compose_path,
+    })
+    return result[0]["text"]
+
+
+@mcp.tool()
+async def rollback_tool(
+    server_id: str, path: str, commits: int = 1,
+    service: str = "", pm2_app: str = "",
+) -> str:
+    """Roll back N commits on the remote server and restart the service/app."""
+    result = await rollback({
+        "server_id": server_id, "path": path, "commits": commits,
+        "service": service, "pm2_app": pm2_app,
+    })
+    return result[0]["text"]
+
+
+@mcp.tool()
+async def env_manage_tool(
+    server_id: str, action: str,
+    path: str = ".", key: str = "", value: str = "",
+) -> str:
+    """
+    Manage .env files on the remote server (values redacted on read).
+    Actions: read, list, write, delete
+    """
+    result = await env_manage({
+        "server_id": server_id, "action": action,
+        "path": path, "key": key, "value": value,
+    })
+    return result[0]["text"]
+
+
+# ── Services & Processes ──────────────────────────────────────────────────────
+
+@mcp.tool()
+async def service_manage_tool(server_id: str, action: str, service: str = "") -> str:
+    """
+    Manage systemd services on the remote server.
+    Actions: list, start, stop, restart, enable, disable, status, reload
+    """
+    result = await service_manage({"server_id": server_id, "action": action, "service": service})
+    return result[0]["text"]
+
+
+@mcp.tool()
+async def port_check_tool(server_id: str, action: str = "open", port: str = "") -> str:
+    """
+    Check open ports and listeners on the remote server.
+    Actions: open (all), check (specific port), connections
+    """
+    result = await port_check({"server_id": server_id, "action": action, "port": port})
+    return result[0]["text"]
+
+
+@mcp.tool()
+async def process_manage_tool(
+    server_id: str, action: str,
+    name: str = "", pid: str = "", signal: str = "SIGTERM",
+) -> str:
+    """
+    Manage OS-level processes on the remote server.
+    Actions: list, top, find, kill
+    """
+    result = await process_manage({
+        "server_id": server_id, "action": action,
+        "name": name, "pid": pid, "signal": signal,
+    })
+    return result[0]["text"]
+
+
+# ── Logs ──────────────────────────────────────────────────────────────────────
+
+@mcp.tool()
+async def log_manage_tool(
+    server_id: str, action: str,
+    path: str = "", pattern: str = "", service: str = "",
+    container: str = "", lines: int = 50, since: str = "",
+) -> str:
+    """
+    Monitor and analyze logs on the remote server.
+    Actions: tail, search, errors, journal, docker, nginx, clear
+    """
+    result = await log_manage({
+        "server_id": server_id, "action": action,
+        "path": path, "pattern": pattern, "service": service,
+        "container": container, "lines": lines, "since": since,
+    })
+    return result[0]["text"]
+
+
+# ── Network & Health ──────────────────────────────────────────────────────────
+
+@mcp.tool()
+async def network_manage_tool(
+    server_id: str, action: str,
+    host: str = "", url: str = "", domain: str = "", count: int = 4,
+) -> str:
+    """
+    Network diagnostics from the remote server.
+    Actions: ping, curl, dns, ssl, traceroute, bandwidth, firewall
+    """
+    result = await network_manage({
+        "server_id": server_id, "action": action,
+        "host": host, "url": url, "domain": domain, "count": count,
+    })
+    return result[0]["text"]
+
+
+@mcp.tool()
+async def cron_manage_tool(
+    server_id: str, action: str,
+    user: str = "", job: str = "", pattern: str = "",
+) -> str:
+    """
+    Manage cron jobs on the remote server.
+    Actions: list, add, remove
+    """
+    result = await cron_manage({
+        "server_id": server_id, "action": action,
+        "user": user, "job": job, "pattern": pattern,
+    })
+    return result[0]["text"]
 
 
 def run():
-    """Entry point for console script"""
-    try:
-        asyncio.run(main())
-    except KeyboardInterrupt:
-        print("\nShutting down...", file=sys.stderr)
-        # Clean up connections
-        for server_id in list(connections.keys()):
-            connections[server_id].close()
+    mcp.run()
 
 
 if __name__ == "__main__":

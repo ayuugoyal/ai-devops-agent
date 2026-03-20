@@ -71,3 +71,22 @@ async def read_file(arguments: dict) -> List[dict]:
     
     return [{"type": "text", "text": f"Contents of {file_path}:\n\n{result['output']}"}]
 
+
+async def write_file(arguments: dict) -> list:
+    """Write content to a remote file (creates or overwrites)."""
+    server_id = arguments["server_id"]
+    file_path = arguments["file_path"]
+    content = arguments["content"]
+
+    if server_id not in connections:
+        if server_id in SERVERS:
+            await connect_server({"server_id": server_id})
+        else:
+            raise Exception(f"Server {server_id} not found")
+
+    manager = connections[server_id]
+    escaped = content.replace("'", "'\\''")
+    result = manager.execute_command(f"cat > {file_path} << 'DEVOPS_EOF'\n{escaped}\nDEVOPS_EOF")
+    if result["exit_code"] != 0:
+        return [{"type": "text", "text": f"Error writing file: {result['error']}"}]
+    return [{"type": "text", "text": f"✓ Written to {file_path}"}]
